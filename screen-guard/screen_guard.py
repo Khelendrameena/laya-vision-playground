@@ -111,6 +111,21 @@ def make_detector():
     return NudeDetector()
 
 
+def _is_wsl() -> bool:
+    """Script WSL ke andar chal raha hai kya? WSL se Windows desktop
+    ka screenshot NAHI liya ja sakta — guard ek khaali Linux virtual
+    screen scan karega aur kabhi kuch detect nahi hoga. Isiliye
+    live mode WSL me turant ruk jata hai (yehi galti 15 Nov ko hui
+    thi: terminal par root@MSI tha, block kabhi aaya hi nahi)."""
+    if os.environ.get("WSL_DISTRO_NAME"):
+        return True
+    try:
+        with open("/proc/sys/kernel/osrelease", encoding="utf-8") as f:
+            return "microsoft" in f.read().lower()
+    except OSError:
+        return False
+
+
 # ------------------------------------------------------------------
 # Live guard: worker thread scan karta hai, Tk main thread pill +
 # overlay sambhalta hai. Dono ke beech ek shared state dict hai.
@@ -139,7 +154,8 @@ def scan_worker(state: GuardState, threshold: float, interval: float,
     prev_gray = None
     log(f"Screen Guard v2 shuru — har {interval}s scan, frame-diff skip on. "
         "Band karne ke liye Ctrl+C ya pill par ✕.")
-    with mss.mss() as sct:
+    mss_factory = getattr(mss, "MSS", None) or getattr(mss, "mss")
+    with mss_factory() as sct:
         monitor = sct.monitors[1]  # primary monitor
         while not state.stop:
             t0 = time.time()
@@ -192,6 +208,19 @@ def scan_worker(state: GuardState, threshold: float, interval: float,
 
 
 def run_live(threshold: float, interval: float, width: int) -> int:
+    if _is_wsl():
+        print("=" * 62)
+        print("⚠  RUKO — ye script WSL ke andar chal raha hai!")
+        print("WSL se Windows ki screen NAHI dikhti. Guard ek khaali")
+        print("Linux virtual screen scan karega aur KABHI kuch detect")
+        print("nahi hoga — block kabhi nahi aayega.")
+        print("")
+        print("Sahi tareeka: Windows PowerShell kholo (WSL wala terminal")
+        print("nahi) aur Windows Python se chalao:")
+        print("    py -m pip install nudenet mss pillow")
+        print("    py screen_guard.py")
+        print("=" * 62)
+        return 2
     try:
         import mss  # noqa: F401
         from PIL import Image  # noqa: F401
