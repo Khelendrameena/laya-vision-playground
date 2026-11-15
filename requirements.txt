@@ -1,0 +1,18 @@
+# Playground server
+fastapi>=0.111
+uvicorn[standard]>=0.30
+python-multipart
+pillow
+
+# Laya Vision (fork) — VERSIONS PINNED hain, aur ye zaroori hai:
+# ye wahi set hai jo official HF demo (thaitea/laya-vision-demo) use
+# karta hai aur jisse yahan end-to-end verify kiya gaya hai.
+# ⚠ Latest transformers (5.23) se upstream code TOOT jata hai —
+#    SmolVLM ka get_image_features wahan list return karta hai aur
+#    laya-vision tensor expect karta hai (predict crash hota hai).
+#    transformers==5.17.0 hi lagana, upgrade mat karna.
+torch==2.14.0
+torchvision==0.29.0
+transformers==5.17.0
+num2words
+laya @ git+https://github.com/r33drichards/laya-vision@404fc4a63208d14b544d5c852f81e88972d267bb

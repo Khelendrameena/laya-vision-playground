@@ -1,0 +1,241 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Laya Vision Playground — image + text → typed decisions</title>
+<style>
+  :root { --bg:#0b0f14; --panel:#131a22; --line:#22303f; --txt:#e6edf3;
+          --dim:#8b98a5; --acc:#f43f5e; --grn:#22c55e; --amb:#f59e0b; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--txt);
+         font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif; }
+  header { display:flex; align-items:center; gap:12px; flex-wrap:wrap;
+           padding:14px 20px; border-bottom:1px solid var(--line); }
+  header h1 { font-size:18px; margin:0; }
+  header p { margin:0; color:var(--dim); font-size:12.5px; width:100%; }
+  .pill { margin-left:auto; font-size:12.5px; padding:5px 12px; border-radius:999px;
+          background:#1c2836; border:1px solid var(--line); }
+  .pill.ready { color:#86efac; border-color:#14532d; }
+  .pill.loading { color:#fcd34d; border-color:#713f12; animation:pulse 1.2s infinite; }
+  .pill.error { color:#fca5a5; border-color:#7f1d1d; }
+  .pill.mock { color:#d8b4fe; border-color:#581c87; }
+  @keyframes pulse { 50% { opacity:.45; } }
+  main { display:grid; grid-template-columns:380px 1fr; gap:16px; padding:16px 20px;
+         max-width:1280px; margin:0 auto; }
+  @media (max-width:900px){ main{ grid-template-columns:1fr; } }
+  .card { background:var(--panel); border:1px solid var(--line); border-radius:14px; padding:14px; }
+  .card h2 { font-size:14px; margin:0 0 10px; color:#c9d4e0; }
+  #drop { border:1.5px dashed #33465c; border-radius:12px; padding:16px; text-align:center;
+          color:var(--dim); cursor:pointer; font-size:13.5px; }
+  #drop.over { border-color:var(--acc); color:var(--txt); }
+  #preview { width:100%; border-radius:10px; margin-top:10px; display:none; }
+  textarea, input, select { width:100%; background:#0d141c; color:var(--txt);
+    border:1px solid var(--line); border-radius:9px; padding:8px 10px; font-size:13.5px; }
+  textarea { resize:vertical; }
+  label { font-size:12px; color:var(--dim); display:block; margin:10px 0 4px; }
+  .presets { display:flex; gap:8px; flex-wrap:wrap; margin-bottom:10px; }
+  .presets button, .mini { background:#1c2836; color:var(--txt); border:1px solid var(--line);
+    border-radius:9px; padding:7px 11px; font-size:12.5px; cursor:pointer; }
+  .presets button:hover, .mini:hover { border-color:var(--acc); }
+  .q { border:1px solid var(--line); border-radius:11px; padding:10px; margin-bottom:10px; background:#0f1620; }
+  .q .row { display:flex; gap:8px; }
+  .q .row > * { flex:1; }
+  .q .del { flex:0 0 auto; background:none; border:none; color:#f87171; cursor:pointer; font-size:15px; }
+  #run { width:100%; background:var(--acc); color:#fff; border:none; border-radius:11px;
+         padding:13px; font-size:15px; font-weight:700; cursor:pointer; margin-top:4px; }
+  #run:disabled { opacity:.45; cursor:not-allowed; }
+  .bar { height:8px; border-radius:99px; background:#1e293b; overflow:hidden; margin:4px 0 9px; }
+  .bar > div { height:100%; background:var(--acc); transition:width .4s; }
+  .ans { border:1px solid var(--line); border-radius:11px; padding:12px; margin-bottom:10px; background:#0f1620; }
+  .ans h3 { margin:0 0 6px; font-size:13px; color:#c9d4e0; }
+  .ans .big { font-size:22px; font-weight:800; }
+  .opt { display:flex; justify-content:space-between; font-size:13px; }
+  .err { color:#fca5a5; font-size:13.5px; white-space:pre-wrap; }
+  .dim { color:var(--dim); font-size:12.5px; }
+  pre { background:#0d141c; border:1px solid var(--line); border-radius:10px; padding:10px;
+        font-size:12px; overflow:auto; max-height:320px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>👁 Laya Vision Playground</h1>
+  <span id="status" class="pill loading">⏳ Model load ho raha hai…</span>
+  <p>Image + optional text note do, typed questions (choice / score / noul) ke calibrated decisions lo —
+     koi text generation nahi. Model: <b>thaitea/laya-vision</b> (SmolVLM-256M, 201M params) · Laya ka independent fork ·
+     weights license CC BY-NC-SA (non-commercial).</p>
+</header>
+<main>
+  <section class="card">
+    <h2>1 · Image</h2>
+    <div id="drop">📷 Click karke image chuno, ya yahan drag-drop karo<br><span class="dim">JPG / PNG, max 12 MB — video ka frame, photo, screenshot, kuch bhi</span></div>
+    <input id="file" type="file" accept="image/*" hidden />
+    <img id="preview" alt="" />
+    <label>Note (optional text context — jaise transcript ya description)</label>
+    <textarea id="note" rows="3" placeholder="e.g. customer says it arrived broken / ye frame ek comedy video se hai"></textarea>
+  </section>
+
+  <section class="card">
+    <h2>2 · Questions</h2>
+    <div class="presets">
+      <button data-preset="shorts">🎬 Shorts Frame Judge</button>
+      <button data-preset="damage">📦 Product Damage</button>
+      <button data-preset="photo">🖼 Photo Check</button>
+      <button id="addQ">＋ Question add karo</button>
+    </div>
+    <div id="questions"></div>
+    <button id="run" disabled>▶ Decision chalao</button>
+    <p id="runmsg" class="dim"></p>
+    <h2 style="margin-top:16px">3 · Results</h2>
+    <div id="results"><p class="dim">Abhi kuch nahi — image + questions set karke Decision chalao.</p></div>
+    <details><summary class="dim" style="cursor:pointer">Raw JSON</summary><pre id="raw">{}</pre></details>
+  </section>
+</main>
+
+<script>
+const PRESETS = {
+  shorts: [
+    { id:"engaging", type:"score", instructions:"How visually engaging is this frame as a short-video thumbnail?",
+      criteria:["boring, nothing happening","average","engaging","scroll-stopping, very expressive"] },
+    { id:"face", type:"noul", instructions:"Is a person's face clearly visible in this frame?", criteria:[] },
+    { id:"kind", type:"choice", instructions:"What best describes this frame?",
+      criteria:["person talking","action or movement","text or screen","scenery or object","other"] },
+  ],
+  damage: [
+    { id:"damage", type:"score", instructions:"How much damage does the item show?",
+      criteria:["none","cosmetic: scratches or dents","functional: parts broken or missing","destroyed"] },
+    { id:"category", type:"choice", instructions:"What kind of item is this?",
+      criteria:["electronics","clothing","furniture","food","other"] },
+    { id:"outdoors", type:"noul", instructions:"Was the photo taken outdoors?", criteria:[] },
+  ],
+  photo: [
+    { id:"quality", type:"score", instructions:"How good is this photo's quality (light, sharpness, composition)?",
+      criteria:["poor","okay","good","excellent"] },
+    { id:"people", type:"noul", instructions:"Are there any people in this photo?", criteria:[] },
+    { id:"setting", type:"choice", instructions:"Where was this photo most likely taken?",
+      criteria:["indoors","outdoors","studio","vehicle"] },
+  ],
+};
+
+let questions = JSON.parse(JSON.stringify(PRESETS.shorts));
+let modelReady = false, imgFile = null;
+
+const $ = (s) => document.querySelector(s);
+
+function renderQuestions() {
+  const box = $("#questions"); box.innerHTML = "";
+  questions.forEach((q, i) => {
+    const d = document.createElement("div"); d.className = "q";
+    d.innerHTML = `
+      <div class="row">
+        <input value="${q.id}" data-f="id" placeholder="question id" />
+        <select data-f="type">
+          ${["choice","score","noul"].map(t => `<option ${t===q.type?"selected":""}>${t}</option>`).join("")}
+        </select>
+        <button class="del" title="hatao">✕</button>
+      </div>
+      <label>Instructions (kya judge karna hai)</label>
+      <input value="${q.instructions.replace(/"/g,"&quot;")}" data-f="instructions" />
+      <div class="crit" style="${q.type==="noul"?"display:none":""}">
+        <label>Criteria / options (ek line = ek option, score me neeche = kam, upar = zyada)</label>
+        <textarea rows="${Math.max(2,(q.criteria||[]).length)}" data-f="criteria">${(q.criteria||[]).join("\n")}</textarea>
+      </div>`;
+    d.querySelectorAll("[data-f]").forEach(el => el.addEventListener("input", () => {
+      const f = el.dataset.f;
+      if (f === "criteria") q.criteria = el.value.split("\n").map(s=>s.trim()).filter(Boolean);
+      else q[f] = el.value;
+      if (f === "type") renderQuestions();
+    }));
+    d.querySelector(".del").onclick = () => { questions.splice(i,1); renderQuestions(); };
+    box.appendChild(d);
+  });
+}
+
+document.querySelectorAll("[data-preset]").forEach(b => b.onclick = () => {
+  questions = JSON.parse(JSON.stringify(PRESETS[b.dataset.preset])); renderQuestions();
+});
+$("#addQ").onclick = () => {
+  questions.push({ id:"q"+(questions.length+1), type:"noul", instructions:"", criteria:[] });
+  renderQuestions();
+};
+
+const drop = $("#drop"), fileIn = $("#file");
+drop.onclick = () => fileIn.click();
+drop.ondragover = (e) => { e.preventDefault(); drop.classList.add("over"); };
+drop.ondragleave = () => drop.classList.remove("over");
+drop.ondrop = (e) => { e.preventDefault(); drop.classList.remove("over"); setFile(e.dataTransfer.files[0]); };
+fileIn.onchange = () => setFile(fileIn.files[0]);
+function setFile(f) {
+  if (!f) return; imgFile = f;
+  const img = $("#preview"); img.src = URL.createObjectURL(f); img.style.display = "block";
+  drop.innerHTML = "📷 " + f.name + " — badalna ho to phir click karo";
+  syncRun();
+}
+function syncRun(){ $("#run").disabled = !(modelReady && imgFile); }
+
+async function pollStatus() {
+  try {
+    const s = await (await fetch("/api/status")).json();
+    const el = $("#status");
+    if (s.status === "ready") {
+      modelReady = true;
+      el.className = "pill " + (s.mock ? "mock" : "ready");
+      el.textContent = s.mock ? "🧪 MOCK mode — asli model nahi chal raha" : `✅ Ready · ${s.device} · ${s.model}`;
+    } else if (s.status === "error") {
+      el.className = "pill error"; el.textContent = "❌ Model load fail: " + s.error;
+    } else {
+      el.className = "pill loading"; el.textContent = "⏳ Model load ho raha hai… (pehli baar download bhi hoga)";
+      setTimeout(pollStatus, 2000);
+    }
+  } catch { setTimeout(pollStatus, 3000); }
+  syncRun();
+}
+
+function bars(probs) {
+  return Object.entries(probs).map(([k,v]) => `
+    <div class="opt"><span>${k}</span><b>${(v*100).toFixed(1)}%</b></div>
+    <div class="bar"><div style="width:${(v*100).toFixed(1)}%"></div></div>`).join("");
+}
+
+$("#run").onclick = async () => {
+  const btn = $("#run"), msg = $("#runmsg"), res = $("#results");
+  btn.disabled = true; res.innerHTML = "";
+  const t0 = Date.now();
+  const timer = setInterval(() => msg.textContent = `⏳ Model soch raha hai… ${Math.floor((Date.now()-t0)/1000)}s`, 500);
+  try {
+    const qs = {};
+    for (const q of questions) {
+      if (!q.id || !q.instructions) throw new Error("Har question ka id aur instructions bharo");
+      qs[q.id] = { type:q.type, instructions:q.instructions };
+      if (q.type !== "noul") qs[q.id].criteria = q.criteria;
+    }
+    const fd = new FormData();
+    fd.append("image", imgFile); fd.append("note", $("#note").value);
+    fd.append("questions", JSON.stringify(qs));
+    const r = await fetch("/api/predict", { method:"POST", body:fd });
+    const j = await r.json();
+    if (!r.ok) throw new Error(j.detail || ("HTTP " + r.status));
+    $("#raw").textContent = JSON.stringify(j, null, 2);
+    msg.textContent = `✅ Ho gaya — ${j.ms} ms · device: ${j.device}${j.mock ? " · 🧪 MOCK result (asli model nahi)" : ""}`;
+    res.innerHTML = Object.entries(j.answers).map(([qid, a]) => {
+      if (a.type === "choice") return `<div class="ans"><h3>${qid} · choice</h3>
+        <div class="big">${a.choice}</div>${bars(a.probabilities)}</div>`;
+      if (a.type === "score") { const leg = Object.entries(a.legend).map(([i,c])=>`${i}=${c}`).join(" · ");
+        return `<div class="ans"><h3>${qid} · score</h3><div class="big">${a.score} / ${Object.keys(a.legend).length-1}</div>
+        <p class="dim">${leg}</p>${bars(a.probabilities)}</div>`; }
+      return `<div class="ans"><h3>${qid} · noul (yes/no)</h3>
+        <div class="big">Yes ${(a.noul*100).toFixed(1)}%</div>
+        <div class="bar"><div style="width:${(a.noul*100).toFixed(1)}%"></div></div></div>`;
+    }).join("");
+  } catch (e) {
+    msg.innerHTML = ""; res.innerHTML = `<p class="err">⚠ ${e.message}</p>`;
+  } finally {
+    clearInterval(timer); btn.disabled = false;
+  }
+};
+
+renderQuestions();
+pollStatus();
+</script>
+</body>
+</html>
