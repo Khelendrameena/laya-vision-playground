@@ -32,12 +32,32 @@ Chalana (Windows Python, WSL me NAHI):
     py -m pip install nudenet mss pillow
     start_guard.bat            <- double-click; bina terminal ke
                                   background me chalega (pythonw)
-  ya terminal se:  py screen_guard.py
-Test pehle:  py screen_guard.py --test-image "C:\\path\\image.jpg"
+                                  — ab STRICT mode me chalta hai
+  ya terminal se:  py screen_guard.py --strict
+Test pehle:  py screen_guard.py --strict --test-image "C:\\path\\image.jpg"
 Band karna:  py stop_guard.py   (phir 10 minute ka countdown)
 
+STRICT MODE (--strict, ab start_guard.bat ka default):
+  * Threshold 0.50 -> 0.25 (NudeNet isse neeche ja hi nahi sakta —
+    uska apna floor ~0.20-0.25 hai, isiliye 0.25 hi sabse sakht hai)
+  * Pehli hit par hi BLOCK (lagatar 2 ka intezaar nahi)
+  * Covered suggestive classes bhi block: FEMALE_BREAST_COVERED,
+    FEMALE_GENITALIA_COVERED, BUTTOCKS_COVERED, ANUS_COVERED,
+    BELLY_EXPOSED / BELLY_COVERED
+  * Keemat: normal skin-heavy videos (gym, dance, sports, beach)
+    bhi block ho sakte hain — strict ka matlab hi ye hai.
+  * Normal mode ab bhi hai: bina --strict chalao.
+  * BUG FIX (strict ke saath): purane EXPLICIT_CLASSES me
+    FEMALE/MALE_BUTTOCKS_EXPOSED aur FEMALE/MALE_ANUS_EXPOSED
+    naam the — NudeNet v3 ke 18 labels me ye naam hote hi nahi
+    (sahi naam: BUTTOCKS_EXPOSED, ANUS_EXPOSED), isiliye buttocks
+    wali detection kabhi gini hi nahi jaati thi. Ab sahi naam hain.
+
 Engine scope: NudeNet SIRF nudity pakadta hai. Violence / horror /
-gore iske scope me NAHI hain.
+gore iske scope me NAHI hain — strict mode skin detection ko
+zyada se zyada sensitive banata hai, violence ka detector nahi
+jodta. Horror/violence wali content ke liye alag engine (CLIP
+zero-shot ya Qwen2.5-VL) lagega — wo agla step hai.
 Privacy: screenshots kahin upload/save nahi hote; har frame ek hi
 temp file par overwrite hota hai, sirf verdict + time log banta hai.
 """
@@ -53,22 +73,34 @@ import time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 
+# NudeNet v3 ke asal 18 labels (nudenet/nudenet.py __labels) — inke
+# bahar ka koi naam kabhi match nahi karega, isiliye yahi likhne hain.
 EXPLICIT_CLASSES = {
     "FEMALE_GENITALIA_EXPOSED",
     "MALE_GENITALIA_EXPOSED",
     "FEMALE_BREAST_EXPOSED",
     "MALE_BREAST_EXPOSED",
-    "FEMALE_BUTTOCKS_EXPOSED",
-    "MALE_BUTTOCKS_EXPOSED",
+    "BUTTOCKS_EXPOSED",
     "ANUS_EXPOSED",
-    "FEMALE_ANUS_EXPOSED",
-    "MALE_ANUS_EXPOSED",
+}
+# Strict: exposed ke saath covered/suggestive bhi. FACE / FEET /
+# ARMPITS jaan-bujh kar bahar — un par block hota to har chehre
+# wali video block ho jaati, guard bekaar ho jaata.
+STRICT_CLASSES = EXPLICIT_CLASSES | {
+    "FEMALE_BREAST_COVERED",
+    "FEMALE_GENITALIA_COVERED",
+    "BUTTOCKS_COVERED",
+    "ANUS_COVERED",
+    "BELLY_EXPOSED",
+    "BELLY_COVERED",
 }
 DEFAULT_THRESHOLD = 0.50
+STRICT_THRESHOLD = 0.25
 SCAN_EVERY_SEC = 0.5
 DETECT_WIDTH = 512
 DIFF_THRESHOLD = 1.5
 HITS_TO_BLOCK = 2
+STRICT_HITS_TO_BLOCK = 1
 SAFE_TO_UNBLOCK = 3
 STOP_DELAY_SEC = 600        # stop_guard ke baad itni der rukna padega
 LOG_FILE = os.path.join(HERE, "screen_guard_log.txt")
@@ -121,9 +153,10 @@ def _pythonw() -> str:
     return exe
 
 
-def verdict_for(detections, threshold: float = DEFAULT_THRESHOLD):
+def verdict_for(detections, threshold: float = DEFAULT_THRESHOLD,
+                classes=EXPLICIT_CLASSES):
     hits = [d for d in (detections or [])
-            if d.get("class") in EXPLICIT_CLASSES
+            if d.get("class") in classes
             and float(d.get("score", 0)) >= threshold]
     return bool(hits), hits
 
@@ -137,12 +170,13 @@ def frame_changed(prev_gray, cur_gray, threshold: float = DIFF_THRESHOLD) -> boo
     return float(diff.mean()) >= threshold
 
 
-def check_image(detector, path: str, threshold: float = DEFAULT_THRESHOLD):
+def check_image(detector, path: str, threshold: float = DEFAULT_THRESHOLD,
+                classes=EXPLICIT_CLASSES):
     t0 = time.time()
     detections = detector.detect(path)
     ms = int((time.time() - t0) * 1000)
-    block, hits = verdict_for(detections, threshold)
-    return block, hits, ms
+    block, hits = verdict_for(detections, threshold, classes)
+    return block, hits, ms, detections
 
 
 def make_detector():
@@ -166,9 +200,18 @@ def _is_wsl() -> bool:
 # hai. Dono heartbeat files se ek dusre ko dekhte hain.
 # ------------------------------------------------------------------
 
+# Strict flag ko watchdog respawn me bhi saath le jaana hai — warna
+# guard mar kar wapas normal mode me chalu ho jaata. main() ise set
+# karta hai; _spawn har child command me jod deta hai.
+_STRICT = False
+
+
 def _spawn(mode) -> None:
     script = os.path.join(HERE, "screen_guard.py")
-    cmd = [_pythonw(), script] + ([mode] if mode else [])
+    cmd = [_pythonw(), script]
+    if _STRICT:
+        cmd.append("--strict")
+    cmd += [mode] if mode else []
     try:
         subprocess.Popen(cmd, cwd=HERE, close_fds=True)
     except Exception as exc:  # noqa: BLE001
@@ -224,7 +267,8 @@ class GuardState:
 
 
 def scan_worker(state: GuardState, threshold: float, interval: float,
-                width: int) -> None:
+                width: int, classes=EXPLICIT_CLASSES,
+                hits_to_block: int = HITS_TO_BLOCK) -> None:
     import mss
     import numpy as np
     from PIL import Image
@@ -232,9 +276,11 @@ def scan_worker(state: GuardState, threshold: float, interval: float,
     detector = make_detector()
     hits = safe = 0
     prev_gray = None
-    log(f"Screen Guard v3 shuru — har {interval}s scan, frame-diff on, "
-        "watchdog saath me. Band karne ka rasta: stop_guard.py "
-        f"(phir {STOP_DELAY_SEC // 60} min countdown).")
+    mode_name = "STRICT" if classes is STRICT_CLASSES else "normal"
+    log(f"Screen Guard v3 shuru [{mode_name}: threshold {threshold}, "
+        f"pehli {hits_to_block} hit par BLOCK] — har {interval}s scan, "
+        "frame-diff on, watchdog saath me. Band karne ka rasta: "
+        f"stop_guard.py (phir {STOP_DELAY_SEC // 60} min countdown).")
     mss_factory = getattr(mss, "MSS", None) or getattr(mss, "mss")
     with mss_factory() as sct:
         # monitors[0] = saari screens mila kar — pehle sirf primary
@@ -259,8 +305,8 @@ def scan_worker(state: GuardState, threshold: float, interval: float,
                     small = img.resize(
                         (width, int(img.height * width / img.width)))
                     small.save(TMP_SHOT)
-                    block, top, ms = check_image(detector, TMP_SHOT,
-                                                 threshold)
+                    block, top, ms, _all = check_image(
+                        detector, TMP_SHOT, threshold, classes)
                     with state.lock:
                         state.scans += 1
                         state.last_ms = ms
@@ -273,7 +319,7 @@ def scan_worker(state: GuardState, threshold: float, interval: float,
                         log(f"HIT ({ms}ms): {desc}")
                         with state.lock:
                             state.top = desc
-                            if hits >= HITS_TO_BLOCK:
+                            if hits >= hits_to_block:
                                 state.blocked_now = True
                             elif state.mode != "stopping":
                                 state.mode = "hit"
@@ -329,7 +375,7 @@ def stop_monitor(state: GuardState) -> None:
         time.sleep(1)
 
 
-def run_guard(with_watchdog: bool = True) -> int:
+def run_guard(with_watchdog: bool = True, strict: bool = False) -> int:
     if _is_wsl():
         print("=" * 62)
         print("⚠  RUKO — ye script WSL ke andar chal raha hai!")
@@ -364,9 +410,13 @@ def run_guard(with_watchdog: bool = True) -> int:
                    [dict(sct.monitors[0])]
 
     state = GuardState()
+    threshold = STRICT_THRESHOLD if strict else DEFAULT_THRESHOLD
+    classes = STRICT_CLASSES if strict else EXPLICIT_CLASSES
+    hits_to_block = STRICT_HITS_TO_BLOCK if strict else HITS_TO_BLOCK
     threading.Thread(target=scan_worker,
-                     args=(state, DEFAULT_THRESHOLD, SCAN_EVERY_SEC,
-                           DETECT_WIDTH), daemon=True).start()
+                     args=(state, threshold, SCAN_EVERY_SEC,
+                           DETECT_WIDTH, classes, hits_to_block),
+                     daemon=True).start()
     threading.Thread(target=stop_monitor, args=(state,),
                      daemon=True).start()
     if with_watchdog:
@@ -379,7 +429,8 @@ def run_guard(with_watchdog: bool = True) -> int:
     root.configure(bg="#131a22")
     sw = root.winfo_screenwidth()
     root.geometry(f"340x34+{sw - 352}+10")
-    pill = tk.Label(root, text="🛡 Guard start ho raha hai…",
+    pill = tk.Label(root, text="🛡 Guard start ho raha hai…"
+                    + (" [STRICT]" if strict else ""),
                     font=("Segoe UI", 10, "bold"), fg="#e6edf3",
                     bg="#131a22", anchor="w")
     pill.pack(side="left", fill="both", expand=True, padx=8)
@@ -474,31 +525,49 @@ def run_guard(with_watchdog: bool = True) -> int:
 
 
 def main(argv=None) -> int:
+    global _STRICT
     p = argparse.ArgumentParser(description="Live screen guard v3 (NudeNet)")
     p.add_argument("--test-image", metavar="PATH",
                    help="Sirf ek image check karo, live guard mat chalao")
     p.add_argument("--threshold", type=float, default=DEFAULT_THRESHOLD)
+    p.add_argument("--strict", action="store_true",
+                   help="Strict mode: threshold 0.25, covered classes "
+                        "bhi block, pehli hit par BLOCK")
     p.add_argument("--watchdog", action="store_true",
                    help="(internal) watchdog process bano")
     p.add_argument("--guard-only", action="store_true",
                    help="(internal) watchdog ke bina guard chalao")
     args = p.parse_args(argv)
+    _STRICT = args.strict
+    if args.strict:
+        args.threshold = STRICT_THRESHOLD
+    classes = STRICT_CLASSES if args.strict else EXPLICIT_CLASSES
     if args.test_image:
         if not os.path.exists(args.test_image):
             print(f"File nahi mili: {args.test_image}")
             return 2
         detector = make_detector()
-        block, hits, ms = check_image(detector, args.test_image,
-                                      args.threshold)
-        print(f"{'🔴 BLOCK' if block else '🟢 SAFE'}  ({ms}ms)")
-        for d in hits:
-            print(f"  {d.get('class')}  score {float(d.get('score', 0)):.2f}")
-        if not hits:
-            print("  koi explicit detection nahi")
+        block, hits, ms, all_dets = check_image(
+            detector, args.test_image, args.threshold, classes)
+        mode_name = "STRICT" if args.strict else "normal"
+        print(f"{'🔴 BLOCK' if block else '🟢 SAFE'}  [{mode_name}, "
+              f"threshold {args.threshold}]  ({ms}ms)")
+        print("Engine ko sab kuch dikha (score ke saath):")
+        for d in sorted(all_dets, key=lambda x: -float(x.get("score", 0))):
+            mark = "HIT" if d in hits else "   "
+            print(f"  {mark} {d.get('class')}  "
+                  f"score {float(d.get('score', 0)):.2f}")
+        if not all_dets:
+            print("  koi detection hi nahi — engine ko is image me "
+                  "kuch dikha hi nahi (na skin, na body part)")
+        if not block and all_dets:
+            print("  => SAFE isiliye: jo dikha wo block-list me nahi, "
+                  "ya score threshold se neeche tha")
         return 0
     if args.watchdog:
         return run_watchdog()
-    return run_guard(with_watchdog=not args.guard_only)
+    return run_guard(with_watchdog=not args.guard_only,
+                     strict=args.strict)
 
 
 if __name__ == "__main__":

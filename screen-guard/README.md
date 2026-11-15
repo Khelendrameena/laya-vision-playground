@@ -29,6 +29,32 @@ Nahi hai (sach):
   hai taaki impulse wala pal nikal jaye — Cold Turkey jaise
   professional tools bhi bilkul yahi karte hain.
 
+## Strict mode (15 Nov shaam — "thoda bhi dark nahi chalega")
+
+`start_guard.bat` ab **STRICT** me chalta hai:
+
+- **Threshold 0.50 → 0.25** — NudeNet isse neeche ja hi nahi sakta
+  (uska apna floor ~0.20–0.25 hai), ye sabse sakht setting hai.
+- **Pehli hit par hi BLOCK** — lagatar 2 ka intezaar khatm.
+- **Covered classes bhi block:** `FEMALE_BREAST_COVERED`,
+  `FEMALE_GENITALIA_COVERED`, `BUTTOCKS_COVERED`, `ANUS_COVERED`,
+  `BELLY_EXPOSED`, `BELLY_COVERED` — kapdon ke upar se suggestive
+  dikhe to bhi block.
+- **Bug fix:** purane rule me `FEMALE/MALE_BUTTOCKS_EXPOSED` aur
+  `FEMALE/MALE_ANUS_EXPOSED` naam the — NudeNet v3 ke 18 labels me
+  ye naam hote hi nahi (sahi: `BUTTOCKS_EXPOSED`, `ANUS_EXPOSED`),
+  isiliye buttocks wali detection kabhi gini hi nahi jaati thi.
+- **Keemat (pehle se jaan lo):** gym / dance / sports / beach jaisi
+  normal skin-heavy videos bhi block ho sakti hain — strict ka
+  matlab hi ye hai. Normal mode chahiye to `py screen_guard.py`
+  (bina `--strict`) chalao.
+- `--test-image` ab **saari detections** score ke saath dikhata hai,
+  sirf hits nahi — isiliye apni dark image par pehle ye chalao:
+  `py screen_guard.py --strict --test-image "C:\path\image.jpg"`.
+  Agar usme **koi detection hi nahi** aaye to samajh lo content
+  nudity wala hai hi nahi — phir horror/violence ka alag engine
+  lagega, strict NudeNet se wo kabhi block nahi hoga.
+
 ## Engine ki limit (ye bhi sach)
 
 - **NudeNet v3** (ONNX, ~12 MB, CPU par ~20–100 ms/frame) — sirf
@@ -67,6 +93,8 @@ start_guard.bat                                          # phir live
   SAFE** → overlay khud hata.
 - Block rule: `GENITALIA / BREAST / BUTTOCKS / ANUS + EXPOSED`,
   score ≥ 0.50. Belly/feet/armpits/face jaan-bujh kar bahar.
+  **Strict (`--strict`, ab default):** threshold 0.25, covered +
+  belly classes bhi, pehli hit par BLOCK.
 - Guard ↔ watchdog **heartbeat files** se ek dusre ko dekhte
   hain; stop ka sanket `stop_request.txt` / `stop_done.txt`
   files se jaata hai (sab isi folder me, sab gitignore me).
