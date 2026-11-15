@@ -237,7 +237,11 @@ def scan_worker(state: GuardState, threshold: float, interval: float,
         f"(phir {STOP_DELAY_SEC // 60} min countdown).")
     mss_factory = getattr(mss, "MSS", None) or getattr(mss, "mss")
     with mss_factory() as sct:
-        monitor = sct.monitors[1]
+        # monitors[0] = saari screens mila kar — pehle sirf primary
+        # monitor scan hota tha, dusri screen par chala video guard
+        # ko dikhta hi nahi tha (overlay sab par aata tha, aankhein
+        # sirf ek screen par thi).
+        monitor = sct.monitors[0]
         while not state.stop:
             t0 = time.time()
             _touch(GUARD_HB)
