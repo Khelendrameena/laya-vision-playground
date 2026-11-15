@@ -31,9 +31,68 @@ FRONTEND = os.path.join(os.path.dirname(__file__), "..", "frontend")
 app = FastAPI(title="Laya Vision Playground")
 
 _state = {"status": "loading", "device": None, "error": None,
-          "model": MODEL_ID, "mock": MOCK}
+          "model": MODEL_ID, "mock": MOCK, "nudenet": False}
 _agent = None
 _lock = threading.Lock()
+
+# --- NudeNet: dusra engine, sirf Safety (18+) check ke liye --------
+# Laya Vision ko explicit content ki training kabhi mili hi nahi,
+# isiliye Safety verdict ab dono engines se banta hai: Laya ke
+# violence/dark sawal + NudeNet ki nudity pehchan. NudeNet na ho
+# (install nahi / load fail) to feature band rehta hai, baaki sab
+# pehle jaisa chalta hai.
+_NUDENET_CLASSES = {
+    "FEMALE_GENITALIA_EXPOSED", "MALE_GENITALIA_EXPOSED",
+    "FEMALE_BREAST_EXPOSED", "MALE_BREAST_EXPOSED",
+    "FEMALE_BUTTOCKS_EXPOSED", "MALE_BUTTOCKS_EXPOSED",
+    "ANUS_EXPOSED", "FEMALE_ANUS_EXPOSED", "MALE_ANUS_EXPOSED",
+}
+_NUDENET_THRESHOLD = 0.50
+_detector = None
+
+
+def _load_nudenet() -> None:
+    global _detector
+    try:
+        from nudenet import NudeDetector
+
+        _detector = NudeDetector()
+        _state["nudenet"] = True
+    except Exception:
+        _detector = None
+
+
+threading.Thread(target=_load_nudenet, daemon=True).start()
+
+
+def _nudenet_check(raw: bytes) -> dict | None:
+    """Image bytes -> {block, hits, ms} ya None (engine off)."""
+    if _detector is None:
+        return None
+    import tempfile
+
+    t0 = time.time()
+    path = None
+    try:
+        with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as f:
+            f.write(raw)
+            path = f.name
+        detections = _detector.detect(path) or []
+    except Exception:
+        return None
+    finally:
+        if path:
+            try:
+                os.unlink(path)
+            except OSError:
+                pass
+    hits = [{"class": d.get("class"),
+             "score": round(float(d.get("score", 0)), 2)}
+            for d in detections
+            if d.get("class") in _NUDENET_CLASSES
+            and float(d.get("score", 0)) >= _NUDENET_THRESHOLD]
+    return {"block": bool(hits), "hits": hits,
+            "ms": int((time.time() - t0) * 1000)}
 
 
 class _MockAgent:
@@ -134,7 +193,8 @@ def predict(image: UploadFile = File(...), note: str = Form(default=""),
     ms = int((time.time() - t0) * 1000)
     return {"answers": result.get("answers", {}), "ms": ms,
             "device": _state["device"], "mock": MOCK,
-            "model": MODEL_ID}
+            "model": MODEL_ID,
+            "nudenet": _nudenet_check(raw) if "sexual" in qs else None}
 
 
 @app.get("/")

@@ -230,10 +230,17 @@ $("#run").onclick = async () => {
     if (currentPreset === "safety") {
       const s = j.answers.sexual?.noul ?? 0, v = j.answers.violence?.noul ?? 0,
             e = j.answers.explicit?.score ?? 0;
-      const block = s >= 0.6 || v >= 0.6 || e >= 2;
+      const nn = j.nudenet; // dusra engine — NudeNet (nudity specialist)
+      const block = s >= 0.6 || v >= 0.6 || e >= 2 || (nn && nn.block);
+      let nnLine = "";
+      if (nn) {
+        nnLine = nn.block
+          ? `<div style="font-size:13px;font-weight:600;margin-top:6px">NudeNet engine: 🔴 ${nn.hits.map(h => h.class.replace(/_/g," ") + " " + Math.round(h.score*100) + "%").join(", ")} (${nn.ms} ms)</div>`
+          : `<div style="font-size:13px;font-weight:600;margin-top:6px">NudeNet engine: 🟢 kuch explicit nahi mila (${nn.ms} ms)</div>`;
+      }
       verdict = `<div class="ans" style="text-align:center;font-size:19px;font-weight:800;`
         + (block ? "border-color:#7f1d1d;color:#fca5a5" : "border-color:#14532d;color:#86efac")
-        + `">${block ? "🔴 BLOCK — 18+ / dark content laga" : "🟢 SAFE — block nahi hoga"}</div>`;
+        + `">${block ? "🔴 BLOCK — 18+ / dark content laga" : "🟢 SAFE — block nahi hoga"}${nnLine}</div>`;
     }
     res.innerHTML = verdict + Object.entries(j.answers).map(([qid, a]) => {
       if (a.type === "choice") return `<div class="ans"><h3>${qid} · choice</h3>

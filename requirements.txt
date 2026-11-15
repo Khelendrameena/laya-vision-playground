@@ -4,6 +4,12 @@ uvicorn[standard]>=0.30
 python-multipart
 pillow
 
+# Safety engine (dusra detector): Safety preset me Laya ke saath
+# NudeNet bhi chalega — Laya ko explicit content ki training mili
+# hi nahi thi. Na install ho to backend khud is feature ko band
+# kar dega, baaki site pehle jaisi chalegi.
+nudenet>=3.4
+
 # Laya Vision (fork) — VERSIONS PINNED hain, aur ye zaroori hai:
 # ye wahi set hai jo official HF demo (thaitea/laya-vision-demo) use
 # karta hai aur jisse yahan end-to-end verify kiya gaya hai.

@@ -1,3 +1,6 @@
 .venv/
+.bench-venv/
 __pycache__/
 *.pyc
+screen-guard/screen_guard_log.txt
+screen-guard/screen_guard_last.png
