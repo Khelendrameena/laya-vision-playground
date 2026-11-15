@@ -79,6 +79,7 @@
     <h2>2 · Questions</h2>
     <div class="presets">
       <button data-preset="shorts">🎬 Shorts Frame Judge</button>
+      <button data-preset="safety">🛡 18+ Safety Block</button>
       <button data-preset="damage">📦 Product Damage</button>
       <button data-preset="photo">🖼 Photo Check</button>
       <button id="addQ">＋ Question add karo</button>
@@ -101,6 +102,12 @@ const PRESETS = {
     { id:"kind", type:"choice", instructions:"What best describes this frame?",
       criteria:["person talking","action or movement","text or screen","scenery or object","other"] },
   ],
+  safety: [
+    { id:"sexual", type:"noul", instructions:"Does this image contain nudity, sexual content, or explicit adult (18+) material?", criteria:[] },
+    { id:"violence", type:"noul", instructions:"Does this image contain graphic violence, gore, blood, weapons being used, or disturbing dark content?", criteria:[] },
+    { id:"explicit", type:"score", instructions:"How adult or explicit is this image overall?",
+      criteria:["fully safe for all ages","mild: suggestive but fully clothed","adult themes but nothing explicit","explicit 18+ content"] },
+  ],
   damage: [
     { id:"damage", type:"score", instructions:"How much damage does the item show?",
       criteria:["none","cosmetic: scratches or dents","functional: parts broken or missing","destroyed"] },
@@ -118,6 +125,7 @@ const PRESETS = {
 };
 
 let questions = JSON.parse(JSON.stringify(PRESETS.shorts));
+let currentPreset = "shorts";
 let modelReady = false, imgFile = null;
 
 const $ = (s) => document.querySelector(s);
@@ -152,6 +160,7 @@ function renderQuestions() {
 }
 
 document.querySelectorAll("[data-preset]").forEach(b => b.onclick = () => {
+  currentPreset = b.dataset.preset;
   questions = JSON.parse(JSON.stringify(PRESETS[b.dataset.preset])); renderQuestions();
 });
 $("#addQ").onclick = () => {
@@ -217,7 +226,16 @@ $("#run").onclick = async () => {
     if (!r.ok) throw new Error(j.detail || ("HTTP " + r.status));
     $("#raw").textContent = JSON.stringify(j, null, 2);
     msg.textContent = `✅ Ho gaya — ${j.ms} ms · device: ${j.device}${j.mock ? " · 🧪 MOCK result (asli model nahi)" : ""}`;
-    res.innerHTML = Object.entries(j.answers).map(([qid, a]) => {
+    let verdict = "";
+    if (currentPreset === "safety") {
+      const s = j.answers.sexual?.noul ?? 0, v = j.answers.violence?.noul ?? 0,
+            e = j.answers.explicit?.score ?? 0;
+      const block = s >= 0.6 || v >= 0.6 || e >= 2;
+      verdict = `<div class="ans" style="text-align:center;font-size:19px;font-weight:800;`
+        + (block ? "border-color:#7f1d1d;color:#fca5a5" : "border-color:#14532d;color:#86efac")
+        + `">${block ? "🔴 BLOCK — 18+ / dark content laga" : "🟢 SAFE — block nahi hoga"}</div>`;
+    }
+    res.innerHTML = verdict + Object.entries(j.answers).map(([qid, a]) => {
       if (a.type === "choice") return `<div class="ans"><h3>${qid} · choice</h3>
         <div class="big">${a.choice}</div>${bars(a.probabilities)}</div>`;
       if (a.type === "score") { const leg = Object.entries(a.legend).map(([i,c])=>`${i}=${c}`).join(" · ");
