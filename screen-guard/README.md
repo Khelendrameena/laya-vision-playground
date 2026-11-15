@@ -1,81 +1,82 @@
-# 🛡 Screen Guard v2 — live screen blocker (NudeNet engine)
+# 🛡 Screen Guard v3 — live screen blocker (NudeNet), bypass-resistant
 
-Live screen se image le kar explicit (18+) content mile to screen
-block karta hai. Local chalta hai — screenshot kahin upload nahi hota.
+Live screen scan karke explicit (18+) content mile to saari screens
+block kar deta hai. Local chalta hai — screenshot kahin upload nahi
+hota. **v3 ka pura design ek hi maksad par hai: khud se bypass
+mushkil ho** — kyunki v2 ka Esc snooze hi sabse bada bypass tha.
 
-**v2 me naya:** NudeNet ab playground ke **Safety preset ke andar
-dusra engine** bhi hai (verdict dono engines se banta hai), aur ye
-guard ab fast real-time hai — frame-diff skip, 0.5s scan cadence,
-status pill, Esc snooze.
+## Bypass-resistance — kya hai, kya nahi
 
-## Pehle ye samajh lo — engine ki limit
+Hai:
+- **Esc snooze NAHI, ✕ button NAHI, overlay band karne ka koi
+  rasta NAHI.** Block se nikalne ka ek hi tareeka: galat page/app
+  se hat jao — screen safe hote hi (lagatar 3 safe frame) overlay
+  khud hat jata hai.
+- **Watchdog:** ek dusra bina-window wala process guard ko zinda
+  rakhta hai. Guard mara (Ctrl+C / Task Manager / crash) to ~10
+  second me khud wapas chalu. Guard bhi watchdog ko dekhta hai.
+- **Band karne ka ek hi rasta:** `py stop_guard.py` → poori line
+  haath se type karo → **10 minute countdown** (pill par dikhta
+  hai, is dauran blocking chaalu rehti hai) → tab band hoga.
+  Mann badle to `py stop_guard.py --cancel`.
+- Overlay **har monitor** par, hamesha sabse upar; band ho jaye
+  to poll loop use khud wapas bana deta hai.
 
-- **Engine NudeNet v3 hai** (ONNX, ~12 MB model, CPU par ~20–100 ms
-  per frame). Sirf **nudity** pakadta hai — exposed body parts.
-- **Violence / horror / gore / dark scenes iske scope me NAHI hain.**
-  Aisi image par ye guard miss karega — ye NudeNet ki documented
-  limit hai, threshold ki galti nahi (Laya Vision wali problem jaisi).
-- Agar tumhari test image horror/dark-scene type ki thi, to is
-  guard ko mat chalao — uske liye koi ready pip engine nahi hai;
-  raaste hain: Laya ko labelled data par fine-tune karna, ya cloud
-  moderation API (screenshots bahar jayenge — privacy tradeoff).
-- License: NudeNet repo AGPL-3.0 hai (PyPI metadata MIT kehta hai) —
-  personal use theek hai, paid product me lagane se pehle check karo.
+Nahi hai (sach):
+- Apni machine par admin tum khud ho — **100% unbypassable kuch
+  nahi hota.** Dono processes ko ek saath Task Manager se marna
+  ab bhi mumkin hai. Design bypass ko *slow aur annoying* banata
+  hai taaki impulse wala pal nikal jaye — Cold Turkey jaise
+  professional tools bhi bilkul yahi karte hain.
+
+## Engine ki limit (ye bhi sach)
+
+- **NudeNet v3** (ONNX, ~12 MB, CPU par ~20–100 ms/frame) — sirf
+  **nudity** pakadta hai. **Violence / horror / gore iske scope
+  me NAHI hain** — aisi content par ye miss karega.
+- License: NudeNet repo AGPL-3.0 — personal use theek, paid
+  product me lagane se pehle check karo.
 
 ## Chalana — Windows Python me (WSL me NAHI)
 
-WSL ke andar se Windows desktop ka screenshot nahi liya ja sakta,
-isiliye ye script **Windows wale Python** me chalani hai
-(python.org installer, tkinter usi me aata hai):
+WSL se Windows desktop ka screenshot nahi liya ja sakta — script
+WSL me chalane par khud ruk kar yahi warning deti hai.
 
 ```powershell
 py -m pip install nudenet mss pillow
 cd laya-vision-playground\screen-guard
-py screen_guard.py
+py screen_guard.py --test-image "C:\path\to\image.jpg"   # pehle test
+start_guard.bat                                          # phir live
 ```
 
-Band karne ke liye terminal me `Ctrl+C`, ya upar wale pill par `✕`.
+- `start_guard.bat` double-click karne se guard **bina terminal
+  ke** background me chalega (pythonw) — band karne ko terminal
+  hi nahi milega, sirf stop_guard wala rasta rahega.
+- Terminal se chalana ho to `py screen_guard.py` — par yaad rahe,
+  Ctrl+C se mara to watchdog wapas chalu kar dega.
+- Upar right corner ka **status pill** hamesha dikhega:
+  🛡 SAFE (scans/skip/last ms) · ⛔ BLOCKED · ⏳ countdown.
+- Login par khud chalu karna ho to `start_guard.bat` ka shortcut
+  Startup folder me daal do (`Win+R` → `shell:startup`).
 
-## Pehle engine test karo (zaroori)
+## Kaise kaam karta hai
 
-Live guard chalane se **pehle** apni dark image par engine test karo:
-
-```powershell
-py screen_guard.py --test-image "C:\path\to\image.jpg"
-```
-
-- `🔴 BLOCK` aaye to live guard use pakdega.
-- `🟢 SAFE` aaye to live guard bhi miss karega — guard chalane ka
-  koi fayda nahi, doosra raasta chuno.
-
-## Kaise kaam karta hai (v2)
-
-- Har **0.5 second** screen check hoti hai, par pehle **frame-diff**:
-  screen badli hi nahi (static page, ruka video) to detection skip —
-  sirf badlaav par asli NudeNet check chalta hai (512px frame par).
-- **Lagatar 2 BLOCK** mile tabhi fullscreen kaala overlay aata hai
-  (ek galat frame se flicker nahi hoga).
-- **Lagatar 3 SAFE** frame mile to overlay khud hat jata hai.
-- Upar right corner me **status pill** hamesha dikhta hai:
-  🛡 SAFE (scans/skips/last ms ke saath) · ⛔ BLOCKED · 💤 SNOOZE.
-- Galat block ho to **Esc** dabao — 60 second snooze (scanning
-  chalti rahegi, block nahi lagega).
-- Block rule: `GENITALIA / BREAST / BUTTOCKS / ANUS + EXPOSED`
-  classes, score ≥ 0.50 (`--threshold` se badal sakte ho). Belly/
-  feet/armpits aur face jaan-bujh kar bahar hain.
-- Log: `screen_guard_log.txt` me sirf verdict + time. Screenshots
-  save nahi hote — har frame ek hi temp file par overwrite hota hai.
-- Options: `--interval 0.5` (scan cadence), `--width 512`,
-  `--threshold 0.50`.
+- Har **0.5s** screen check; pehle **frame-diff** — screen badli
+  hi nahi to detection skip, sirf badlaav par asli check (512px).
+- **Lagatar 2 BLOCK** → saari screens par overlay. **Lagatar 3
+  SAFE** → overlay khud hata.
+- Block rule: `GENITALIA / BREAST / BUTTOCKS / ANUS + EXPOSED`,
+  score ≥ 0.50. Belly/feet/armpits/face jaan-bujh kar bahar.
+- Guard ↔ watchdog **heartbeat files** se ek dusre ko dekhte
+  hain; stop ka sanket `stop_request.txt` / `stop_done.txt`
+  files se jaata hai (sab isi folder me, sab gitignore me).
+- Log: `screen_guard_log.txt` — sirf verdict + time.
 
 ## Verified (15 Nov 2026)
 
-- Is VM (kamzor shared CPU) par: NudeDetector init ~0.3s, detect
-  ~20–100 ms/frame (640/512/416px — teeno par lagbhag same, model
-  andar khud resize karta hai); safe image par koi false detection
-  nahi. Frame-diff + verdict logic ke unit checks pass.
-- Playground backend me integration test: `/api/status` me
-  `nudenet: true`, Safety predict ke jawab me asli NudeNet result
-  (`block: false, ms: 98` safe image par).
-- Live capture/overlay **is VM par test nahi hua** — yahan koi
-  screen nahi hai; pehla live run tumhare Windows PC par hoga.
+- Is VM par: NudeNet detect ~20–100 ms, frame-diff/verdict unit
+  checks pass, stop-flow ka simulation pass (sahi line → request
+  file → countdown → proper stop; galat line → reject; --cancel
+  kaam karta hai — ek argv bug test me pakda gaya aur fix hua).
+- Live capture/overlay/watchdog ka pehla asal test **tumhare
+  Windows PC** par hoga — is VM par screen hi nahi hai.
