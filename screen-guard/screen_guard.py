@@ -1,9 +1,25 @@
-"""Screen Guard v3 — live screen blocker (NudeNet), bypass-resistant.
+"""Screen Guard v4 — live screen blocker, bypass-resistant + smart engine.
 
 Kya karta hai: screen ko har ~0.5 second scan karta hai, NudeNet v3
 (ONNX, local, koi upload nahi) se explicit content check karta hai,
 aur lagatar 2 baar mile to saari screens par kaala BLOCK overlay
 dikha deta hai. Safe frames wapas aate hi overlay khud hat jata hai.
+
+v4 — SMART ENGINE LAYER (WSL/GPU): sirf NudeNet "dark" ki wide
+definition (kiss/romance, suggestive, horror) kabhi pakad hi nahi
+sakta — wo sirf nudity dekhta hai. Isiliye ab har badla frame ek
+chhoti JPEG bankar WSL me chalte hue clip_engine_server.py ko bhi
+jaata hai (localhost:8300, machine se bahar kuch nahi jaata),
+jahan CLIP ViT-L/14 zero-shot + NudeNet dono chalte hain.
+Block = local NudeNet HIT *ya* engine ka BLOCK. Engine band ho
+(WSL band, server band) to guard pehle ki tarah sirf local
+NudeNet par chalta rehta hai — andha kabhi nahi hota, pill par
+engine ki haalat dikhti hai.
+CLIP ka rule andha argmax nahi hai: dark >= 0.60 ya
+(dark - safe) >= 0.10 par block — 6 asli verified images par
+margin rule 6/6 sahi nikla, plain argmax 4/6 (church ki chhat
+aur suit wala aadmi galat block hue the). Poora saboot
+clip_engine_server.py ki docstring me hai.
 
 BYPASS-RESISTANT DESIGN (v3 — v2 ka Esc snooze hi sabse bada
 bypass tha, isiliye hata diya):
@@ -53,11 +69,12 @@ STRICT MODE (--strict, ab start_guard.bat ka default):
     (sahi naam: BUTTOCKS_EXPOSED, ANUS_EXPOSED), isiliye buttocks
     wali detection kabhi gini hi nahi jaati thi. Ab sahi naam hain.
 
-Engine scope: NudeNet SIRF nudity pakadta hai. Violence / horror /
-gore iske scope me NAHI hain — strict mode skin detection ko
-zyada se zyada sensitive banata hai, violence ka detector nahi
-jodta. Horror/violence wali content ke liye alag engine (CLIP
-zero-shot ya Qwen2.5-VL) lagega — wo agla step hai.
+Engine scope: local NudeNet SIRF nudity pakadta hai. Violence /
+horror / gore / kiss iske scope me NAHI hain — unke liye v4 ka
+CLIP engine layer hai (upar dekho). Sach ye bhi hai: CLIP ki
+horror/violence categories asli horror frame par ab bhi
+unverified hain — kiss/suggestive 6-image test me verified
+hain, horror ka asal test tumhara YouTube wala hi hoga.
 Privacy: screenshots kahin upload/save nahi hote; har frame ek hi
 temp file par overwrite hota hai, sirf verdict + time log banta hai.
 """
@@ -109,6 +126,16 @@ GUARD_HB = os.path.join(HERE, "guard.heartbeat")
 WATCHDOG_HB = os.path.join(HERE, "watchdog.heartbeat")
 STOP_REQ = os.path.join(HERE, "stop_request.txt")
 STOP_DONE = os.path.join(HERE, "stop_done.txt")
+# v4 smart engine (WSL me chalta hai, GPU par) — na mile to guard
+# sirf local NudeNet par chalta hai, rukta kabhi nahi.
+# Timeout 20s isiliye: engine CPU par gir jaye to ek frame par
+# 10-15s bhi lag sakte hain (GPU par ~0.3s). Engine bilkul band
+# ho to connection turant refuse hota hai — wait nahi lagta.
+# Fail hone par scan_worker 20s tak engine ko dobara try nahi
+# karta, taaki scan loop atke nahi.
+ENGINE_URL = "http://127.0.0.1:8300/check"
+ENGINE_TIMEOUT = 20.0
+ENGINE_RETRY_GAP = 20.0
 
 
 def log(msg: str) -> None:
@@ -183,6 +210,30 @@ def make_detector():
     from nudenet import NudeDetector
 
     return NudeDetector()
+
+
+def engine_check(jpeg_bytes: bytes):
+    """WSL smart engine (CLIP L/14 + NudeNet) se verdict lo.
+    (block, desc) lautata hai; engine na mile / fail ho to None —
+    caller local NudeNet par hi aage badhta hai."""
+    import base64
+    import json
+    import urllib.request
+
+    payload = json.dumps(
+        {"image_b64": base64.b64encode(jpeg_bytes).decode()}).encode()
+    req = urllib.request.Request(
+        ENGINE_URL, data=payload,
+        headers={"Content-Type": "application/json"})
+    try:
+        with urllib.request.urlopen(req, timeout=ENGINE_TIMEOUT) as r:
+            out = json.loads(r.read().decode())
+    except Exception:  # noqa: BLE001 — engine band hai, local chalega
+        return None
+    if out.get("block"):
+        desc = "; ".join(out.get("reasons") or ["engine block"])
+        return True, desc
+    return False, ""
 
 
 def _is_wsl() -> bool:
@@ -264,6 +315,7 @@ class GuardState:
         self.top = ""
         self.stop_deadline = None   # stopping mode me kab band hoga
         self.stop = False
+        self.engine_on = False      # v4: WSL smart engine judaa hai?
 
 
 def scan_worker(state: GuardState, threshold: float, interval: float,
@@ -276,10 +328,13 @@ def scan_worker(state: GuardState, threshold: float, interval: float,
     detector = make_detector()
     hits = safe = 0
     prev_gray = None
+    next_engine_try = 0.0       # engine fail ho to thodi der chhodo
+    engine_known_on = False
     mode_name = "STRICT" if classes is STRICT_CLASSES else "normal"
-    log(f"Screen Guard v3 shuru [{mode_name}: threshold {threshold}, "
+    log(f"Screen Guard v4 shuru [{mode_name}: threshold {threshold}, "
         f"pehli {hits_to_block} hit par BLOCK] — har {interval}s scan, "
-        "frame-diff on, watchdog saath me. Band karne ka rasta: "
+        "frame-diff on, watchdog saath me, smart engine (CLIP) "
+        "localhost:8300 par try hoga. Band karne ka rasta: "
         f"stop_guard.py (phir {STOP_DELAY_SEC // 60} min countdown).")
     mss_factory = getattr(mss, "MSS", None) or getattr(mss, "mss")
     with mss_factory() as sct:
@@ -307,15 +362,35 @@ def scan_worker(state: GuardState, threshold: float, interval: float,
                     small.save(TMP_SHOT)
                     block, top, ms, _all = check_image(
                         detector, TMP_SHOT, threshold, classes)
+                    desc = ", ".join(
+                        f"{d['class']} {float(d['score']):.2f}"
+                        for d in top) if block else ""
+                    # v4 smart engine: WSL wala CLIP bhi yahi frame
+                    # dekhta hai — uska BLOCK bhi hit gina jayega,
+                    # engine band ho to local verdict hi chalega.
+                    # Fail par ENGINE_RETRY_GAP tak dobara try nahi —
+                    # warna har frame timeout par atakta rahega.
+                    eng = None
+                    if time.time() >= next_engine_try:
+                        import io as _io
+                        buf = _io.BytesIO()
+                        small.save(buf, format="JPEG", quality=80)
+                        eng = engine_check(buf.getvalue())
+                        engine_known_on = eng is not None
+                        if eng is None:
+                            next_engine_try = time.time() \
+                                + ENGINE_RETRY_GAP
                     with state.lock:
                         state.scans += 1
                         state.last_ms = ms
+                        state.engine_on = engine_known_on
+                    if eng is not None and eng[0]:
+                        if not block:
+                            desc = eng[1]
+                        block = True
                     if block:
                         hits += 1
                         safe = 0
-                        desc = ", ".join(
-                            f"{d['class']} {float(d['score']):.2f}"
-                            for d in top)
                         log(f"HIT ({ms}ms): {desc}")
                         with state.lock:
                             state.top = desc
@@ -428,7 +503,7 @@ def run_guard(with_watchdog: bool = True, strict: bool = False) -> int:
     root.attributes("-topmost", True)
     root.configure(bg="#131a22")
     sw = root.winfo_screenwidth()
-    root.geometry(f"340x34+{sw - 352}+10")
+    root.geometry(f"430x34+{sw - 442}+10")
     pill = tk.Label(root, text="🛡 Guard start ho raha hai…"
                     + (" [STRICT]" if strict else ""),
                     font=("Segoe UI", 10, "bold"), fg="#e6edf3",
@@ -485,6 +560,7 @@ def run_guard(with_watchdog: bool = True, strict: bool = False) -> int:
                                       state.scans, state.skips)
             deadline = state.stop_deadline
             blocked_now = state.blocked_now
+            engine_on = state.engine_on
         if blocked_now:
             show_overlays()
         else:
@@ -503,7 +579,9 @@ def run_guard(with_watchdog: bool = True, strict: bool = False) -> int:
         elif mode == "safe":
             hide_overlays()
             extra = f" · last {ms}ms" if ms is not None else ""
-            pill.config(text=f"🛡 SAFE · scans {scans} · skip {skips}{extra}",
+            eng_txt = " · 🧠 engine ON" if engine_on else " · engine OFF"
+            pill.config(text=f"🛡 SAFE · scans {scans} · skip {skips}"
+                             f"{extra}{eng_txt}",
                         fg="#86efac")
         else:
             pill.config(text="🛡 Guard start ho raha hai…", fg="#e6edf3")
@@ -526,7 +604,7 @@ def run_guard(with_watchdog: bool = True, strict: bool = False) -> int:
 
 def main(argv=None) -> int:
     global _STRICT
-    p = argparse.ArgumentParser(description="Live screen guard v3 (NudeNet)")
+    p = argparse.ArgumentParser(description="Live screen guard v4 (NudeNet + CLIP engine)")
     p.add_argument("--test-image", metavar="PATH",
                    help="Sirf ek image check karo, live guard mat chalao")
     p.add_argument("--threshold", type=float, default=DEFAULT_THRESHOLD)
@@ -563,6 +641,23 @@ def main(argv=None) -> int:
         if not block and all_dets:
             print("  => SAFE isiliye: jo dikha wo block-list me nahi, "
                   "ya score threshold se neeche tha")
+        # v4: WSL smart engine (CLIP) bhi try karo — chal raha ho to
+        try:
+            import io as _io
+            from PIL import Image as _Image
+            _buf = _io.BytesIO()
+            _Image.open(args.test_image).convert("RGB").save(
+                _buf, format="JPEG", quality=85)
+            eng = engine_check(_buf.getvalue())
+            if eng is None:
+                print("  Smart engine (CLIP): nahi mila — WSL server "
+                      "band hai, upar wala verdict sirf local "
+                      "NudeNet ka hai")
+            else:
+                print(f"  Smart engine (CLIP): "
+                      f"{'🔴 BLOCK' if eng[0] else '🟢 SAFE'}  {eng[1]}")
+        except Exception as exc:  # noqa: BLE001
+            print(f"  Smart engine check fail: {exc}")
         return 0
     if args.watchdog:
         return run_watchdog()

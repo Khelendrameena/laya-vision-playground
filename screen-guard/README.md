@@ -1,4 +1,4 @@
-# 🛡 Screen Guard v3 — live screen blocker (NudeNet), bypass-resistant
+# 🛡 Screen Guard v4 — live screen blocker, bypass-resistant + CLIP smart engine
 
 Live screen scan karke explicit (18+) content mile to saari screens
 block kar deta hai. Local chalta hai — screenshot kahin upload nahi
@@ -55,11 +55,47 @@ Nahi hai (sach):
   nudity wala hai hi nahi — phir horror/violence ka alag engine
   lagega, strict NudeNet se wo kabhi block nahi hoga.
 
+## v4 Smart Engine — CLIP layer (15 Nov raat — "kiss bhi nahi chalega")
+
+NudeNet akela "dark" ki wide definition kabhi nahi pakad sakta —
+wo sirf badan dekhta hai, scene nahi samajhta. Isiliye v4 me ek
+dusra engine judaa hai jo **WSL me GPU par** chalta hai:
+
+- **`clip_engine_server.py`** (WSL, playground wali `.venv` se):
+  CLIP **ViT-L/14** zero-shot (kiss/romance, suggestive, nudity,
+  horror, violence, alcohol — categories sirf English text hain)
+  + NudeNet strict. Port 8300, sirf localhost.
+- **Guard (Windows)** har badla frame chhoti JPEG bankar engine
+  ko bhejta hai; engine ka BLOCK bhi hit gina jaata hai. Engine
+  band ho to guard sirf local NudeNet par chalta rehta hai —
+  pill par `🧠 engine ON` / `engine OFF` dikhta hai.
+- **`start_guard.bat`** ab pehle WSL engine ki window kholta hai
+  (pehli baar ~1.7 GB model download — progress usi window me),
+  phir guard chalu karta hai.
+
+**CLIP ka block rule andha argmax nahi hai:** block agar
+`dark >= 0.60` ya `(dark − safe) >= 0.10`. Kyoon: 6 asli images
+(sab ki sachchai aankh se verify ki) par plain argmax se bada
+CLIP bhi church ki chhat (margin 0.06) aur suit pehne aadmi
+(0.05) ko galat block kar raha tha; asli dark ka margin bahut
+bada tha (asli kiss 0.53, bikini 0.999). Margin rule ke saath
+**6/6 sahi**, aur poora live rasta (guard client → HTTP →
+engine) bhi **6/6 verified** (15 Nov, is VM ke CPU par 5–9 s/check
+— RTX GPU par ~0.3 s expected). Chhota CLIP ViT-B/32 isi test
+me 1/5 par fail hua, Falconsai NSFW classifier ne bikini ko
+"normal 1.0" bola — dono reject kiye gaye, saboot ke saath.
+
+**Ab bhi sach:** CLIP ki horror/violence categories kisi asli
+horror frame par abhi tak verified nahi hain — kiss/suggestive
+verified hain. Horror wala asal test tumhara YouTube par hi
+hoga; miss ho to log file me CLIP ke numbers dikhenge, wahan se
+categories/margin tune hoga.
+
 ## Engine ki limit (ye bhi sach)
 
-- **NudeNet v3** (ONNX, ~12 MB, CPU par ~20–100 ms/frame) — sirf
-  **nudity** pakadta hai. **Violence / horror / gore iske scope
-  me NAHI hain** — aisi content par ye miss karega.
+- **Local NudeNet v3** (ONNX, ~12 MB, CPU par ~20–100 ms/frame)
+  — sirf **nudity** pakadta hai. **Violence / horror / gore
+  iske scope me NAHI hain** — wo v4 ke CLIP engine ka kaam hai.
 - License: NudeNet repo AGPL-3.0 — personal use theek, paid
   product me lagane se pehle check karo.
 
@@ -74,6 +110,14 @@ cd laya-vision-playground\screen-guard
 py screen_guard.py --test-image "C:\path\to\image.jpg"   # pehle test
 start_guard.bat                                          # phir live
 ```
+
+- **v4 engine ke liye:** `start_guard.bat` WSL engine khud khol
+  deta hai. WSL taraf pehle pakka kar lo ki playground ki venv
+  me sab hai: `cd ~/laya_image/laya-vision-playground && bash
+  run.sh` ek baar chalaya ho (ya `.venv/bin/pip install
+  nudenet`). Engine akela test karna ho to WSL me:
+  `.venv/bin/python screen-guard/clip_engine_server.py
+  --test-image <image>`.
 
 - `start_guard.bat` double-click karne se guard **bina terminal
   ke** background me chalega (pythonw) — band karne ko terminal
@@ -106,5 +150,13 @@ start_guard.bat                                          # phir live
   checks pass, stop-flow ka simulation pass (sahi line → request
   file → countdown → proper stop; galat line → reject; --cancel
   kaam karta hai — ek argv bug test me pakda gaya aur fix hua).
+- **v4 engine (15 Nov raat):** `clip_verdict` unit test 6/6
+  (asli L/14 numbers par); poora live rasta — guard ka asli
+  `engine_check` client → HTTP → engine server (CLIP + NudeNet)
+  → verdict — 6 verified images par **6/6 sahi** (asli kiss aur
+  bikini BLOCK; pathar, church ki chhat, suit wala aadmi,
+  painting SAFE). Ek asli bug test me pakda gaya: client timeout
+  6 s CPU inference se chhota tha — ab 20 s + fail par 20 s ka
+  retry gap.
 - Live capture/overlay/watchdog ka pehla asal test **tumhare
   Windows PC** par hoga — is VM par screen hi nahi hai.
